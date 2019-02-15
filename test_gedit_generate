@@ -1,0 +1,282 @@
+#include "ros/ros.h"
+#include "std_msgs/String.h"
+#include <sstream>
+#include <serial/serial.h>
+#include <std_msgs/Empty.h>
+#include <stdlib.h>
+#include <time.h>
+#include <iostream>
+#include <sys/time.h>
+#include <stdio.h>
+#include <string>
+#include <my_serial_node/Point3D.h>
+#include <my_serial_node/Quaternion.h>
+#include <my_serial_node/Sonar.h>
+#include <my_serial_node/Surround.h>
+#include <tf/transform_datatypes.h>
+#include <tf/transform_broadcaster.h>
+
+
+serial::Serial ros_ser;
+
+int main(int argc, char **argv)
+{
+  ros::init(argc, argv, "talker");
+  ros::NodeHandle n;
+  ros::Publisher sensor_pub = n.advertise<my_serial_node::Surround>("/ab/sensor/ultrasonic_radar", 1000);
+
+  try {   //set value for serial port
+    ros_ser.setPort("/dev/ttyS1");
+    ros_ser.setBaudrate(115200);
+    serial::Timeout to = serial::Timeout::simpleTimeout(1000);
+    ros_ser.setTimeout(to);
+    ros_ser.open();
+  }
+  catch (serial::IOException& e) {
+    ROS_ERROR_STREAM("Unable to open port ");
+    return -1;
+  }
+  if (ros_ser.isOpen()) {
+    ROS_INFO_STREAM("Serial Port opened");
+  } else {
+    return -1;
+  }
+  uint8_t cmdd[12] = {0x10, 0x18, 0x20, 0x28, 0x30, 0x38, 0x40, 0x48, 0x50, 0x58, 0x60, 0x68};
+  uint8_t cmddd[3] = {0xe8, 0x02};
+  ros::Rate loop_rate(50);
+  int distances[12];
+  int j = 0;
+  struct timeval t1, t2;
+
+  //the time of per sequence
+  //double total_time = 0.0;
+  double average_per_time = 0.0;
+  /*-------------code for calculate the per_sentence------------
+       * double secs_start = ros::Time::now().toSec();
+       * //---------the code--------------
+       * double secs_end = ros::Time::now().toSec();
+       * double secs = (double)(secs_end - secs_start);
+       * total_per_time = total_per_time + secs;
+       * //std::cout << "total_per_time : " << total_per_time << std::endl;
+       * /
+      /*-------------while-------------*/
+  int count = 0;
+  const double pi = 3.141593;
+  my_serial_node::Surround msg;
+  while (ros::ok())
+  {
+//        gettimeofday(&t1, NULL);
+//        //-----------tire_orientation----轮胎的转角-----
+//        double tire_orientation = 4;
+//        //轮胎转向
+//        bool tire = true; //TODO per-define by car status
+//        //汽车的行驶方向信息
+//        int orientation;
+//        // true 代表三种模式，分别是 forward forward_right forward_left
+//        //define:"backward"
+//        if (tire == true) {
+//          if (tire_orientation > (-2) && tire_orientation < (2)) {
+//            orientation = 1;//"forward";
+//          } else if (tire_orientation >= (2)) {
+//            orientation = 2;//"forward_right";
+//          } else if (tire_orientation <= (-2)) {
+//            orientation = 3;//"forward_left";
+//          }
+//        } else {
+//          if (tire_orientation > (-2) && tire_orientation < (2)) {
+//            orientation = 4;//"backward";
+//          } else if (tire_orientation >= (2)) {
+//            orientation = 5;//"backward_right";
+//          } else if (tire_orientation <= (-2)) {
+//            orientation = 6;//"backward_left";
+//          }
+//        }
+//        //--------------cmdd-----------
+//        //根据汽车的行驶方向orientation选择需要工作的传感器（每次都是4个传感器工作）
+//        uint8_t cmdd[4];
+//        switch (orientation) {
+//          case 1:
+//            cmdd[0] = 0x10;
+//            cmdd[1] = 0x18;
+//            cmdd[2] = 0x20;
+//            cmdd[3] = 0x28;
+//            break;
+//          case 2:
+//            cmdd[0] = 0x18;
+//            cmdd[1] = 0x20;
+//            cmdd[2] = 0x28;
+//            cmdd[3] = 0x30;
+//            break;
+//          case 3:
+//            cmdd[0] = 0x68;
+//            cmdd[1] = 0x10;
+//            cmdd[2] = 0x18;
+//            cmdd[3] = 0x20;
+//            break;
+//          case 4:
+//            cmdd[0] = 0x40;
+//            cmdd[1] = 0x48;
+//            cmdd[2] = 0x50;
+//            cmdd[3] = 0x58;
+//            break;
+//          case 5:
+//            cmdd[0] = 0x38;
+//            cmdd[1] = 0x40;
+//            cmdd[2] = 0x48;
+//            cmdd[3] = 0x50;
+//            break;
+//          case 6:
+//            cmdd[0] = 0x48;
+//            cmdd[1] = 0x50;
+//            cmdd[2] = 0x58;
+//            cmdd[3] = 0x60;
+//            break;
+//          default:
+//            perror("warning : wrong orientation!"); //TODO warning
+//            break;
+//        }
+
+    //-----------------------------------------
+
+    double angle_value = 0.707106;
+    //    for (int i = 0; i < 4; i++)
+    for (int i = 0; i < 12; i++) {
+      cmddd[2] = cmdd[i];
+      //--------------------------------写入串口地址-------------------------------------
+      ros_ser.write(cmddd, 3);
+      //----------------------------------获取串口数据---------------------------------------
+      uint8_t data[3];
+      int num = ros_ser.read(data, 3);
+      distances[i] = data[0]*256+data[1];
+      msg.sonar[i].range = double(distances[i]);
+
+      if (cmdd[i] == 0x18 || cmdd[i] == 0x20 || cmdd[i] == 0x48 || cmdd[i] == 0x50) {
+          if (cmdd[i] == 0x18) {
+            msg.sonar[1].translation.x = -250;
+            msg.sonar[1].translation.y = (((double)distances[i]) + 2400) * (1.0);
+            msg.sonar[1].translation.z = 500;
+            msg.sonar[1].range = (double)distances[i] / 1.0;
+            msg.sonar[1].rotation.qx = tf::createQuaternionMsgFromRollPitchYaw(0, 0, 0).x;
+            msg.sonar[1].rotation.qy = tf::createQuaternionMsgFromRollPitchYaw(0, 0, 0).y;
+            msg.sonar[1].rotation.qz = tf::createQuaternionMsgFromRollPitchYaw(0, 0, 0).z;
+            msg.sonar[1].rotation.qw = tf::createQuaternionMsgFromRollPitchYaw(0, 0, 0).w;
+        } else if (cmdd[i] == 0x20) {
+              msg.sonar[2].translation.x = 250;
+              msg.sonar[2].translation.y = (((double)distances[i]) + 2400) * (1.0);
+              msg.sonar[2].translation.z = 500;
+              msg.sonar[2].range = (double)distances[i] / 1.0;
+              msg.sonar[2].rotation.qx = tf::createQuaternionMsgFromRollPitchYaw(0, 0, 0).x;
+              msg.sonar[2].rotation.qy = tf::createQuaternionMsgFromRollPitchYaw(0, 0, 0).y;
+              msg.sonar[2].rotation.qz = tf::createQuaternionMsgFromRollPitchYaw(0, 0, 0).z;
+              msg.sonar[2].rotation.qw = tf::createQuaternionMsgFromRollPitchYaw(0, 0, 0).w;
+          } else if (cmdd[i] == 0x48) {
+              msg.sonar[7].translation.x = 250;
+              msg.sonar[7].translation.y = (((double)distances[i]) + 1500) * (-1.0);
+              msg.sonar[7].translation.z = 500;
+              msg.sonar[7].range = (double)distances[i] / 1.0;
+              msg.sonar[7].rotation.qx = tf::createQuaternionMsgFromRollPitchYaw(0, 0, pi).x;
+              msg.sonar[7].rotation.qy = tf::createQuaternionMsgFromRollPitchYaw(0, 0, pi).y;
+              msg.sonar[7].rotation.qz = tf::createQuaternionMsgFromRollPitchYaw(0, 0, pi).z;
+              msg.sonar[7].rotation.qw = tf::createQuaternionMsgFromRollPitchYaw(0, 0, pi).w;
+          } else if (cmdd[i] == 0x50) {
+              msg.sonar[8].translation.x = -250;
+              msg.sonar[8].translation.y = (((double)distances[i]) + 1500) * (-1.0);
+              msg.sonar[8].translation.z = 500;
+              msg.sonar[8].range = (double)distances[i] / 1.0;
+              msg.sonar[8].rotation.qx = tf::createQuaternionMsgFromRollPitchYaw(0, 0, pi).x;
+              msg.sonar[8].rotation.qy = tf::createQuaternionMsgFromRollPitchYaw(0, 0, pi).y;
+              msg.sonar[8].rotation.qz = tf::createQuaternionMsgFromRollPitchYaw(0, 0, pi).z;
+              msg.sonar[8].rotation.qw = tf::createQuaternionMsgFromRollPitchYaw(0, 0, pi).w;
+          }
+      }else if (cmdd[i] == 0x10 || cmdd[i] == 0x28 || cmdd[i] == 0x40 || cmdd[i] == 0x58) {
+          if (cmdd[i] == 0x10) {
+              msg.sonar[0].translation.x = (((double)distances[i]) * angle_value + 850) * (-1.0);
+              msg.sonar[0].translation.y = (((double)distances[i]) * angle_value + 2400) * (1.0);
+              msg.sonar[0].translation.z = 500;
+              msg.sonar[0].range = (double)distances[i] / 1.0;
+              msg.sonar[0].rotation.qx = tf::createQuaternionMsgFromRollPitchYaw(0, 0, pi/4).x;
+              msg.sonar[0].rotation.qy = tf::createQuaternionMsgFromRollPitchYaw(0, 0, pi/4).y;
+              msg.sonar[0].rotation.qz = tf::createQuaternionMsgFromRollPitchYaw(0, 0, pi/4).z;
+              msg.sonar[0].rotation.qw = tf::createQuaternionMsgFromRollPitchYaw(0, 0, pi/4).w;
+        } else if (cmdd[i] == 0x28) {
+            msg.sonar[3].translation.x = (((double)distances[i]) * angle_value + 850) * (1.0);
+            msg.sonar[3].translation.y = (((double)distances[i]) * angle_value + 2400) * (1.0);
+            msg.sonar[3].translation.z = 500;
+            msg.sonar[3].range = (double)distances[i] / 1.0;
+            msg.sonar[3].rotation.qx = tf::createQuaternionMsgFromRollPitchYaw(0, 0, -pi/4).x;
+            msg.sonar[3].rotation.qy = tf::createQuaternionMsgFromRollPitchYaw(0, 0, -pi/4).y;
+            msg.sonar[3].rotation.qz = tf::createQuaternionMsgFromRollPitchYaw(0, 0, -pi/4).z;
+            msg.sonar[3].rotation.qw = tf::createQuaternionMsgFromRollPitchYaw(0, 0, -pi/4).w;
+        } else if (cmdd[i] == 0x40) {
+              msg.sonar[6].translation.x = (((double)distances[i]) * angle_value + 850) * (1.0);
+              msg.sonar[6].translation.y = (((double)distances[i]) * angle_value + 1500) * (-1.0);
+              msg.sonar[6].translation.z = 500;
+              msg.sonar[6].range = (double)distances[i] / 1.0;
+              msg.sonar[6].rotation.qx = tf::createQuaternionMsgFromRollPitchYaw(0, 0, -3*pi/4).x;
+              msg.sonar[6].rotation.qy = tf::createQuaternionMsgFromRollPitchYaw(0, 0, -3*pi/4).y;
+              msg.sonar[6].rotation.qz = tf::createQuaternionMsgFromRollPitchYaw(0, 0, -3*pi/4).z;
+              msg.sonar[6].rotation.qw = tf::createQuaternionMsgFromRollPitchYaw(0, 0, -3*pi/4).w;
+        } else if (cmdd[i] == 0x58) {
+            msg.sonar[9].translation.x = (((double)distances[i]) * angle_value + 850) * (-1.0);
+            msg.sonar[9].translation.y = ((double)distances[i] * angle_value + 1500) * (-1.0);
+            msg.sonar[9].translation.z = 500;
+            msg.sonar[9].range = (double)distances[i] / 1.0;
+            msg.sonar[9].rotation.qx = tf::createQuaternionMsgFromRollPitchYaw(0, 0, 3*pi/4).x;
+            msg.sonar[9].rotation.qy = tf::createQuaternionMsgFromRollPitchYaw(0, 0, 3*pi/4).y;
+            msg.sonar[9].rotation.qz = tf::createQuaternionMsgFromRollPitchYaw(0, 0, 3*pi/4).z;
+            msg.sonar[9].rotation.qw = tf::createQuaternionMsgFromRollPitchYaw(0, 0, 3*pi/4).w;
+        }
+      }else{
+          if (cmdd[i] == 0x30) {
+              msg.sonar[4].translation.x = (((double)distances[i]) + 850) * (1.0);
+              msg.sonar[4].translation.y = 1200;
+              msg.sonar[4].translation.z = 500;
+              msg.sonar[4].range = (double)distances[i] / 1.0;
+              msg.sonar[4].rotation.qx = tf::createQuaternionMsgFromRollPitchYaw(0, 0, -pi/2).x;
+              msg.sonar[4].rotation.qy = tf::createQuaternionMsgFromRollPitchYaw(0, 0, -pi/2).y;
+              msg.sonar[4].rotation.qz = tf::createQuaternionMsgFromRollPitchYaw(0, 0, -pi/2).z;
+              msg.sonar[4].rotation.qw = tf::createQuaternionMsgFromRollPitchYaw(0, 0, -pi/2).w;
+          } else if (cmdd[i] == 0x38) {
+              msg.sonar[5].translation.x = (((double)distances[i]) + 850) * (1.0);
+              msg.sonar[5].translation.y = 0;
+              msg.sonar[5].translation.z = 500;
+              msg.sonar[5].range = (double)distances[i] / 1.0;
+              msg.sonar[5].rotation.qx = tf::createQuaternionMsgFromRollPitchYaw(0, 0, -pi/2).x;
+              msg.sonar[5].rotation.qy = tf::createQuaternionMsgFromRollPitchYaw(0, 0, -pi/2).y;
+              msg.sonar[5].rotation.qz = tf::createQuaternionMsgFromRollPitchYaw(0, 0, -pi/2).z;
+              msg.sonar[5].rotation.qw = tf::createQuaternionMsgFromRollPitchYaw(0, 0, -pi/2).w;
+          } else if (cmdd[i] == 0x68) {
+              msg.sonar[11].translation.x = (((double)distances[i]) + 850) * (-1.0);
+              msg.sonar[11].translation.y = 1200;
+              msg.sonar[11].translation.z = 500;
+              msg.sonar[11].range = (double)distances[i] / 1.0;
+              msg.sonar[11].rotation.qx = tf::createQuaternionMsgFromRollPitchYaw(0, 0, pi/2).x;
+              msg.sonar[11].rotation.qy = tf::createQuaternionMsgFromRollPitchYaw(0, 0, pi/2).y;
+              msg.sonar[11].rotation.qz = tf::createQuaternionMsgFromRollPitchYaw(0, 0, pi/2).z;
+              msg.sonar[11].rotation.qw = tf::createQuaternionMsgFromRollPitchYaw(0, 0, pi/2).w;
+        } else if (cmdd[i] == 0x60) {
+              msg.sonar[10].translation.x = (((double)distances[i]) + 850) * (-1.0);
+              msg.sonar[10].translation.y = 0;
+              msg.sonar[10].translation.z = 500;
+              msg.sonar[10].range = (double)distances[i] / 1.0;
+              msg.sonar[10].rotation.qx = tf::createQuaternionMsgFromRollPitchYaw(0, 0, pi/2).x;
+              msg.sonar[10].rotation.qy = tf::createQuaternionMsgFromRollPitchYaw(0, 0, pi/2).y;
+              msg.sonar[10].rotation.qz = tf::createQuaternionMsgFromRollPitchYaw(0, 0, pi/2).z;
+              msg.sonar[10].rotation.qw = tf::createQuaternionMsgFromRollPitchYaw(0, 0, pi/2).w;
+          }
+      }
+    }
+    gettimeofday(&t2, NULL);
+    average_per_time = ((t2.tv_sec-t1.tv_sec) * 1000000+ t2.tv_usec-t1.tv_usec) / 1000;
+    msg.time = average_per_time;
+    count++;
+    sensor_pub.publish(msg);
+    ros::spinOnce();
+    loop_rate.sleep();
+  }
+//  ROS_INFO_STREAM("Total time is :" << total_time << "ms");
+//  ROS_INFO_STREAM("Average time is :" << average_per_time << "ms");
+//  ROS_INFO_STREAM("The count is :" << count);
+  return 0;
+}
+
